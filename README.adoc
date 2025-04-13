@@ -1,0 +1,26 @@
+= À propos
+
+Ce dépôt contient un service qui va régulièrement lancer des requêtes vers une API HTTP, et si la réponse contient des éléments pertinents, va envoyer une notification à des cibles.
+
+= Principes du MVP (Produit Minimum Viable)
+
+- Rust
+- Pas d'authentification, jeton, etc. pour se connecter au service distant
+- Un-à-Un (une seule cible pour les notifications)
+- Déployé sur un SPV distant
+
+= À considérer
+
+- Conteneurisé ?
+- Zig ?
+- Personnalisation du service distant interrogé (fréquence, etc.)
+- API de configuration (avec Axum, Actix, ou autre)
+
+= Manuel d'utilisation
+
+- Vous buildez le bazar
+- Vous lancez la commande avec les options requises (à venir)
+- Ça lance un process qui va faire ce que vous lui demandez
+- Toutes les N secondes, le process va exécuter une requête vers le serveur distant
+  - S'il n'y a pas d'éléments adéquat, il ne se passe rien
+  - S'il y a au moins un élément, envoi d'une notification
