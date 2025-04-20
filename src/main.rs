@@ -4,7 +4,7 @@ use clap::Parser;
 
 #[derive(Parser)]
 struct Cli {
-    #[arg(long = "interval", default_value_t = 5000)]
+    #[arg(long = "interval", default_value_t = 0)]
     interval: u64,
 
     #[arg(long = "url")]
@@ -24,6 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let res = reqwest::blocking::get(&url)?;
         println!("Response: {:?}, {}", res.version(), res.status());
 
-        sleep(interval);
+        if !interval.is_zero() {
+            sleep(interval);
+        } else {
+            return Ok(())
+        }
     }
 }
