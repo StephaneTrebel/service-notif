@@ -4,7 +4,7 @@ use clap::Parser;
 
 #[derive(Parser)]
 struct Cli {
-    #[arg(long = "interval")]
+    #[arg(long = "interval", default_value_t = 5000)]
     interval: u64,
 
     #[arg(long = "url")]
