@@ -22,13 +22,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         println!("Fetching URL: {}", &url);
 
-        let res = reqwest::get(&url).await?;
+        let res = reqwest::Client::new().get(&url).send().await?;
+
         println!("Response: {:?}, {}", res.version(), res.status());
 
         if !interval.is_zero() {
             sleep(interval);
         } else {
-            return Ok(())
+            return Ok(());
         }
     }
 }
