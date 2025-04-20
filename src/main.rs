@@ -11,7 +11,8 @@ struct Cli {
     url: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
     println!("Starting...");
 
@@ -21,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         println!("Fetching URL: {}", &url);
 
-        let res = reqwest::blocking::get(&url)?;
+        let res = reqwest::get(&url).await?;
         println!("Response: {:?}, {}", res.version(), res.status());
 
         if !interval.is_zero() {
