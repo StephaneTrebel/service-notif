@@ -1175,6 +1175,7 @@ dependencies = [
 name = "service-notif"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "clap",
  "reqwest",
  "serde",

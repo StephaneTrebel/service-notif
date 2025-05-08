@@ -1,7 +1,9 @@
-use std::{collections::HashSet, thread::sleep, time::Duration};
+use std::{collections::HashSet, env::var, thread::sleep, time::Duration};
 
+use base64::{engine::general_purpose, Engine};
 use clap::Parser;
-use serde::Deserialize;
+use reqwest::{header::HeaderMap, StatusCode};
+use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
 struct Cli {
@@ -38,7 +40,7 @@ struct Item {
     size_title: String,
     status: String,
     total_item_price: TotalItemPrice,
-    photo: Photo
+    photo: Photo,
 }
 
 #[derive(Deserialize, Debug)]
@@ -57,40 +59,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cookie_url: String = args.cookie_url;
     let search_url: String = args.search_url;
 
-    let client = reqwest::Client::builder().cookie_store(true).build()?;
+    let query_client = reqwest::Client::builder().cookie_store(true).build()?;
 
-    let status = client
-        .get(&cookie_url)
-        .send()
-        .await?
-        .status();
+    let mut mail_headers = HeaderMap::new();
+    mail_headers.insert("Content-Type", "application/json".parse().unwrap());
+    mail_headers.insert(
+        "Authorization",
+        format!(
+            "Basic {}",
+            general_purpose::STANDARD.encode(
+                (format!("{}:{}", var("MAILJET_API_KEY")?, var("MAILJET_API_SECRET")?))
+                    .into_bytes()
+            )
+        )
+        .parse()
+        .unwrap(),
+    );
+    let mail_client = reqwest::Client::builder()
+        .default_headers(mail_headers)
+        .build()?;
+
+    let status = query_client.get(&cookie_url).send().await?.status();
     println!("Status: {status}");
 
+    let mut new_items = false;
     loop {
         println!();
 
         println!("Fetching URL: {}", &search_url);
 
-        let response_raw = client.get(&search_url).send().await?;
+        let response_raw = query_client.get(&search_url).send().await?;
         println!("Response Status: {}", response_raw.status());
-
         let response = response_raw.json::<Response>().await?;
-        // println!("Response object: {:?}", &response);
-
-        let mut new_items = false;
 
         println!("Length: {}", &response.items.len());
 
         for item in response.items.iter() {
             if !id_set.contains(&item.id) {
                 new_items = true;
-                println!("New item {:?}\n", item);
+                // println!("New item {:?}\n", item);
                 id_set.insert(item.id);
             }
         }
 
         if !new_items {
             println!("No new items :(");
+        } else {
+            match send_mail(&mail_client, &response.items).await {
+                Ok(_) => println!("Mail correctly sent"),
+                Err(e) => println!("Error while sending mail: {}", e),
+            }
+            new_items = false;
         }
 
         if !interval.is_zero() {
@@ -99,4 +118,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     }
+}
+
+const MAILJET_SEND_MAIL_URL: &str = "https://api.mailjet.com/v3.1/send";
+
+#[derive(Serialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "PascalCase")]
+struct EMail<'a> {
+    email: &'a str,
+    name: &'a str,
+}
+
+#[derive(Serialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "PascalCase")]
+struct Message<'a> {
+    from: EMail<'a>,
+    to: Vec<EMail<'a>>,
+    subject: &'a str,
+    text_part: &'a str,
+    #[serde(rename = "HTMLPart")]
+    htmlpart: &'a str,
+}
+
+#[derive(Serialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "PascalCase")]
+struct Mail<'a> {
+    messages: Vec<Message<'a>>,
+}
+
+async fn send_mail(
+    mail_client: &reqwest::Client,
+    _items: &HashSet<Item>,
+) -> Result<(), reqwest::Error> {
+    let mail = Mail {
+        messages: vec![Message {
+            from: EMail {
+                email: "service-notif@permacodeur.fr",
+                name: "Service Notif",
+            },
+            to: vec![EMail {
+                email: "stephane.trebel@gmail.com",
+                name: "You",
+            }],
+            subject: "New items published !",
+            text_part: "New items have been published, go check them !",
+            htmlpart: "<h1>YOOOOO</h1>",
+        }],
+    };
+
+    println!("JSON: {:?}", serde_json::to_string(&mail));
+
+    let mail_response = mail_client
+        .post(MAILJET_SEND_MAIL_URL)
+        .json::<Mail>(&mail)
+        .send()
+        .await;
+
+    match mail_response {
+        Ok(response) if response.status() == StatusCode::OK => println!("All good, baby !"),
+        Ok(response) if response.status() >= StatusCode::BAD_REQUEST => {
+            println!("Error: {:?}", response);
+            println!("Response body: {:?}", response.text().await?);
+        }
+        Err(ref e) => println!(
+            "There was catastrophic error while sending the mail: {:?}",
+            e
+        ),
+        response => println!("WTF: {:?}", response),
+    };
+
+    Ok(())
 }
