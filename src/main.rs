@@ -2,6 +2,7 @@ use std::{collections::HashSet, env::var, thread::sleep, time::Duration};
 
 use base64::{engine::general_purpose, Engine};
 use clap::Parser;
+use maud::html;
 use reqwest::{header::HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 
@@ -17,25 +18,26 @@ struct Cli {
     search_url: String,
 }
 
-#[derive(Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct TotalItemPrice {
     amount: String,
     currency_code: String,
 }
 
-#[derive(Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct Thumbnail {
     url: String,
 }
 
-#[derive(Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct Photo {
     thumbnails: Vec<Thumbnail>,
 }
 
-#[derive(Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct Item {
     id: usize,
+    title: String,
     url: String,
     size_title: String,
     status: String,
@@ -43,9 +45,12 @@ struct Item {
     photo: Photo,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
+struct Items(HashSet<Item>);
+
+#[derive(Serialize, Deserialize, Debug)]
 struct Response {
-    items: HashSet<Item>,
+    items: Items,
 }
 
 #[tokio::main]
@@ -92,9 +97,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Response Status: {}", response_raw.status());
         let response = response_raw.json::<Response>().await?;
 
-        println!("Length: {}", &response.items.len());
+        println!("Length: {}", &response.items.0.len());
 
-        for item in response.items.iter() {
+        for item in response.items.0.iter() {
             if !id_set.contains(&item.id) {
                 new_items = true;
                 // println!("New item {:?}\n", item);
@@ -146,10 +151,11 @@ struct Mail<'a> {
     messages: Vec<Message<'a>>,
 }
 
-async fn send_mail(
-    mail_client: &reqwest::Client,
-    _items: &HashSet<Item>,
-) -> Result<(), reqwest::Error> {
+async fn send_mail(mail_client: &reqwest::Client, items: &Items) -> Result<(), reqwest::Error> {
+    println!("items: {:?}", serde_json::to_string(items));
+
+    let html_part = create_html_part(items);
+
     let mail = Mail {
         messages: vec![Message {
             from: EMail {
@@ -162,7 +168,7 @@ async fn send_mail(
             }],
             subject: "New items published !",
             text_part: "New items have been published, go check them !",
-            htmlpart: "<h1>YOOOOO</h1>",
+            htmlpart: &html_part,
         }],
     };
 
@@ -188,4 +194,58 @@ async fn send_mail(
     };
 
     Ok(())
+}
+
+fn create_html_part(items: &Items) -> String {
+    (html! {
+        table {
+            thead {
+                tr {
+                    td { "URL" }
+                    td { "Taille" }
+                    td { "État" }
+                    td { "Prix" }
+                    td { "Miniature" }
+                }
+            }
+            tbody {
+                @for item in &items.0 {
+                    tr {
+                        td { a href=(item.url) target="_blank" { (item.title) } }
+                        td { (item.size_title) }
+                        td { (item.status) }
+                        td {
+                            (item.total_item_price.amount)
+                            " "
+                            (item.total_item_price.currency_code)
+                        }
+                        td {
+                            img src=(item.photo.thumbnails[0].url) {}
+                        }
+                    }
+                }
+            }
+        }
+    })
+    .into_string()
+}
+
+#[cfg(test)]
+mod tests_create_html_part {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn simple() -> Result<(), Box<dyn std::error::Error>> {
+        let json = fs::read_to_string("test.json").expect("Cannot load file");
+        let items: Items = serde_json::from_str(&json)?;
+
+        let html_part = create_html_part(&items);
+
+        fs::write("test.html", &html_part)?;
+
+        assert_eq!(html_part, "toto");
+        Ok(())
+    }
 }
