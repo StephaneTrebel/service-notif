@@ -2,8 +2,7 @@ use std::{collections::HashSet, env::var, thread::sleep, time::Duration};
 
 use base64::{engine::general_purpose, Engine};
 use clap::Parser;
-use maud::html;
-use reqwest::{header::HeaderMap, StatusCode};
+use reqwest::{header::HeaderMap, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
@@ -19,42 +18,33 @@ struct Cli {
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-struct TotalItemPrice {
-    amount: String,
-    currency_code: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-struct Thumbnail {
-    url: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-struct Photo {
-    thumbnails: Vec<Thumbnail>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct Item {
     id: usize,
-    title: String,
-    url: String,
-    size_title: String,
-    status: String,
-    total_item_price: TotalItemPrice,
-    photo: Photo,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Items(HashSet<Item>);
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Response {
+struct LibResponse {
     items: Items,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub trait CreateHtmlPart {
+    fn create_html_part(&self, items: &Items) -> String;
+}
+
+pub trait ParseResponse {
+    async fn parse_response(
+        &self,
+        response_raw: &Response,
+    ) -> Result<LibResponse, Box<dyn std::error::Error>>;
+}
+
+pub async fn start<P>(p: &P) -> Result<(), Box<dyn std::error::Error>>
+where
+    P: CreateHtmlPart + ParseResponse,
+{
     let args = Cli::parse();
     println!("Starting...");
 
@@ -95,14 +85,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let response_raw = query_client.get(&search_url).send().await?;
         println!("Response Status: {}", response_raw.status());
-        let response = response_raw.json::<Response>().await?;
+        // TODO let response = response_raw.json::<MyResponse>().await?;
+        let response = p.parse_response(&response_raw).await?;
 
         println!("Length: {}", &response.items.0.len());
 
         for item in response.items.0.iter() {
             if !id_set.contains(&item.id) {
                 new_items = true;
-                // println!("New item {:?}\n", item);
                 id_set.insert(item.id);
             }
         }
@@ -110,9 +100,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !new_items {
             println!("No new items :(");
         } else {
-            match send_mail(&mail_client, &response.items).await {
+            let html_part = p.create_html_part(&response.items);
+            match send_mail(&mail_client, html_part).await {
                 Ok(_) => println!("Mail correctly sent"),
-                Err(e) => println!("Error while sending mail: {}", e),
+                Err(e) => println!("Error while sending mail: {e}"),
             }
             new_items = false;
         }
@@ -151,11 +142,7 @@ struct Mail<'a> {
     messages: Vec<Message<'a>>,
 }
 
-async fn send_mail(mail_client: &reqwest::Client, items: &Items) -> Result<(), reqwest::Error> {
-    println!("items: {:?}", serde_json::to_string(items));
-
-    let html_part = create_html_part(items);
-
+async fn send_mail(mail_client: &reqwest::Client, html_part: String) -> Result<(), reqwest::Error> {
     let mail = Mail {
         messages: vec![Message {
             from: EMail {
@@ -168,7 +155,7 @@ async fn send_mail(mail_client: &reqwest::Client, items: &Items) -> Result<(), r
             }],
             subject: "New items published !",
             text_part: "New items have been published, go check them !",
-            htmlpart: &html_part,
+            htmlpart: html_part.as_str(),
         }],
     };
 
@@ -183,69 +170,12 @@ async fn send_mail(mail_client: &reqwest::Client, items: &Items) -> Result<(), r
     match mail_response {
         Ok(response) if response.status() == StatusCode::OK => println!("All good, baby !"),
         Ok(response) if response.status() >= StatusCode::BAD_REQUEST => {
-            println!("Error: {:?}", response);
+            println!("Error: {response:?}");
             println!("Response body: {:?}", response.text().await?);
         }
-        Err(ref e) => println!(
-            "There was catastrophic error while sending the mail: {:?}",
-            e
-        ),
-        response => println!("WTF: {:?}", response),
+        Err(ref e) => println!("There was catastrophic error while sending the mail: {e}",),
+        response => println!("WTF: {response:?}"),
     };
 
     Ok(())
-}
-
-fn create_html_part(items: &Items) -> String {
-    (html! {
-        table {
-            thead {
-                tr {
-                    td { "URL" }
-                    td { "Taille" }
-                    td { "État" }
-                    td { "Prix" }
-                    td { "Miniature" }
-                }
-            }
-            tbody {
-                @for item in &items.0 {
-                    tr {
-                        td { a href=(item.url) target="_blank" { (item.title) } }
-                        td { (item.size_title) }
-                        td { (item.status) }
-                        td {
-                            (item.total_item_price.amount)
-                            " "
-                            (item.total_item_price.currency_code)
-                        }
-                        td {
-                            img src=(item.photo.thumbnails[0].url) {}
-                        }
-                    }
-                }
-            }
-        }
-    })
-    .into_string()
-}
-
-#[cfg(test)]
-mod tests_create_html_part {
-    use std::fs;
-
-    use super::*;
-
-    #[test]
-    fn simple() -> Result<(), Box<dyn std::error::Error>> {
-        let json = fs::read_to_string("test.json").expect("Cannot load file");
-        let items: Items = serde_json::from_str(&json)?;
-
-        let html_part = create_html_part(&items);
-
-        fs::write("test.html", &html_part)?;
-
-        assert_eq!(html_part, "toto");
-        Ok(())
-    }
 }
