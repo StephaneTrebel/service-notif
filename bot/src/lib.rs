@@ -17,21 +17,34 @@ struct Cli {
     search_url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct Item {
     id: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Items(HashSet<Item>);
+// #[derive(Serialize, Deserialize, Debug)]
+// struct Items(HashSet<Item>);
 
 #[derive(Serialize, Deserialize, Debug)]
 struct LibResponse {
-    items: Items,
+    items: HashSet<Item>,
+}
+
+pub trait GetId {
+    fn get_id(&self) -> usize;
+}
+
+impl GetId for Item {
+    fn get_id(&self) -> usize {
+        self.id
+    }
 }
 
 pub trait CreateHtmlPart {
-    fn create_html_part(&self, items: &Items) -> String;
+    fn create_html_part<Items, Inner>(&self, items: &Items) -> String
+    where
+        Items: IntoIterator<Item = Inner> + Clone,
+        Inner: Clone;
 }
 
 pub trait ParseResponse {
@@ -41,9 +54,9 @@ pub trait ParseResponse {
     ) -> Result<LibResponse, Box<dyn std::error::Error>>;
 }
 
-pub async fn start<P>(p: &P) -> Result<(), Box<dyn std::error::Error>>
+pub async fn start<APP>(app: &APP) -> Result<(), Box<dyn std::error::Error>>
 where
-    P: CreateHtmlPart + ParseResponse,
+    APP: CreateHtmlPart + ParseResponse,
 {
     let args = Cli::parse();
     println!("Starting...");
@@ -86,11 +99,11 @@ where
         let response_raw = query_client.get(&search_url).send().await?;
         println!("Response Status: {}", response_raw.status());
         // TODO let response = response_raw.json::<MyResponse>().await?;
-        let response = p.parse_response(&response_raw).await?;
+        let response = app.parse_response(&response_raw).await?;
 
-        println!("Length: {}", &response.items.0.len());
+        println!("Length: {}", &response.items.len());
 
-        for item in response.items.0.iter() {
+        for item in response.items.iter() {
             if !id_set.contains(&item.id) {
                 new_items = true;
                 id_set.insert(item.id);
@@ -100,7 +113,7 @@ where
         if !new_items {
             println!("No new items :(");
         } else {
-            let html_part = p.create_html_part(&response.items);
+            let html_part = app.create_html_part(&response.items);
             match send_mail(&mail_client, html_part).await {
                 Ok(_) => println!("Mail correctly sent"),
                 Err(e) => println!("Error while sending mail: {e}"),

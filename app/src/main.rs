@@ -4,23 +4,23 @@ use std::collections::HashSet;
 use reqwest::Response;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct TotalItemPrice {
     amount: String,
     currency_code: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct Thumbnail {
     url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct Photo {
     thumbnails: Vec<Thumbnail>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct Item {
     id: usize,
     title: String,
@@ -31,12 +31,12 @@ struct Item {
     photo: Photo,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Items(HashSet<Item>);
+// #[derive(Serialize, Deserialize, Debug)]
+// struct Items(HashSet<Item>);
 
 #[derive(Serialize, Deserialize, Debug)]
 struct MyResponse {
-    items: Items,
+    items: HashSet<Item>,
 }
 
 struct MyApp;
@@ -45,7 +45,11 @@ impl bot::CreateHtmlPart for MyApp {
     // fn create_html_part<T>(items: &std::collections::HashSet<T>) -> String {
     // todo!()
     // }
-    fn create_html_part(&self, items: &Items) -> String {
+    fn create_html_part<Items, Inner>(&self, items: &Items) -> String
+    where
+        Items: IntoIterator<Item = Inner> + Clone,
+        Inner == Item
+    {
         (html! {
             table {
                 thead {
@@ -58,7 +62,7 @@ impl bot::CreateHtmlPart for MyApp {
                     }
                 }
                 tbody {
-                    @for item in &items.0 {
+                    @for item in items.clone().into_iter() {
                         tr {
                             td { a href=(item.url) target="_blank" { (item.title) } }
                             td { (item.size_title) }
